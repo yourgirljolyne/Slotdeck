@@ -95,8 +95,10 @@ public static class ImageCodec
         }
         if (pkg.Length < 60) return null;
         int w = BinaryPrimitives.ReadInt32LittleEndian(pkg.AsSpan(20)), h = BinaryPrimitives.ReadInt32LittleEndian(pkg.AsSpan(24));
-        int offset = (int)BinaryPrimitives.ReadUInt32LittleEndian(pkg.AsSpan(12));
-        if (w is < 1 or > 1024 || h is < 1 or > 1024 || offset is < 54 or > 1024) return null;
+        // The BMP's pixel offset counts from the BMP, which starts after the type tag. Reading from there shows
+        // what the keyboard shows, including the 1 px shift in pictures Web Hub wrote.
+        int offset = ScreenFiles.TypeTagSize + (int)BinaryPrimitives.ReadUInt32LittleEndian(pkg.AsSpan(12));
+        if (w is < 1 or > 1024 || h is < 1 or > 1024 || offset is < 56 or > 1026) return null;
         int stride = w * 2 + (4 - w * 2 % 4) % 4;
         if (offset + stride * h > pkg.Length) return null;
 

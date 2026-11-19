@@ -27,14 +27,19 @@ public static class ScreenFiles
         return b;
     }
 
+    /// <summary>Bytes before the BMP itself: the file type tag 0x48 0x00.</summary>
+    public const int TypeTagSize = 2;
+
     /// <summary>
-    /// Builds the image package exactly like Web Hub's Air 99 ScreenService.convertToBMP:
-    /// 0x48 0x00, then a 16-bit BMP header, RGB565 pixels from offset 54 (rows top to bottom), unix time at the end.
+    /// Builds an image package: 0x48 0x00, then a 16-bit BMP whose RGB565 pixels start 54 bytes into the BMP
+    /// (rows top to bottom), then a unix time.
+    /// Web Hub's convertToBMP writes the pixels 54 bytes into the *package* instead, 2 bytes early, so the
+    /// keyboard shows its images shifted one pixel left with the next row's first pixel in the last column.
     /// </summary>
     public static byte[] ImagePackage(ReadOnlySpan<byte> rgba, int w, int h)
     {
         int rowBytes = w * 2, pad = (4 - rowBytes % 4) % 4, stride = rowBytes + pad;
-        int pixelBytes = stride * h, dataOffset = 54, total = dataOffset + pixelBytes + 6;
+        int pixelBytes = stride * h, dataOffset = 54, total = TypeTagSize + dataOffset + pixelBytes + 4;
         var b = new byte[total];
         var s = b.AsSpan();
         BinaryPrimitives.WriteUInt16LittleEndian(s[0..], 72);
@@ -52,11 +57,10 @@ public static class ScreenFiles
         BinaryPrimitives.WriteUInt32LittleEndian(s[36..], (uint)pixelBytes);
         BinaryPrimitives.WriteUInt32LittleEndian(s[40..], 2835);
         BinaryPrimitives.WriteUInt32LittleEndian(s[44..], 2835);
-        // (Web Hub also writes colour masks at 48..67; pixel data then overwrites them from 54.)
         BinaryPrimitives.WriteUInt32LittleEndian(s[48..], 0);
         BinaryPrimitives.WriteUInt32LittleEndian(s[52..], 0);
 
-        int o = dataOffset;
+        int o = TypeTagSize + dataOffset; // where the keyboard reads the first pixel
         for (int y = 0; y < h; y++)
         {
             for (int x = 0; x < w; x++)

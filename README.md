@@ -11,6 +11,13 @@ The Corsair VANGUARD AIR 99 keeps the images and GIFs you upload in **slots** on
 - **See them all.** Every slot gets a thumbnail, and GIFs play in the preview.
 - **Replace a slot.** Pick an image or GIF (or drop one on the window). It's scaled to the 248×170 screen: filled and cropped by default, or fitted with black bars if you tick the box. Long GIFs are trimmed to 100 frames. A still image takes about 2 seconds to write; a 40-frame GIF takes about a minute.
 - **Show a slot.** Double-click it, or step through them with **Previous** / **Next**.
+- **No stray line.** Pictures uploaded with Corsair's Web Hub show a flickering 1-pixel line at the right edge of the screen. That's a bug in Web Hub (details below). Pictures written by SlotDeck don't have it.
+
+## The Web Hub 1-pixel bug
+
+Each picture on the keyboard is a 2-byte type tag followed by a BMP image. The BMP header says the pixels start 54 bytes in, and the keyboard counts that from the start of the BMP, so it reads from byte 56. Web Hub writes the pixels from byte 54, 2 bytes too early. The keyboard therefore shows every picture shifted one pixel to the left, and fills the last column with the first pixel of the next row, which shows up as a line that changes with every GIF frame.
+
+SlotDeck writes the pixels where the keyboard reads them. Its previews read pictures the same way the keyboard does, so a Web Hub picture shows its shift in the app too. Replacing a slot with SlotDeck gets rid of the line.
 
 ## Get it running
 

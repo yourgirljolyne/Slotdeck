@@ -65,6 +65,7 @@ Buffer index 0 = "common file index".
 1. SET property 3 = 2 (HOST_CONTROLLED).
 2. Write the image as a **file** (OPEN → if that fails UNBIND + CREATE + OPEN → WRITE begin/continue → UNBIND). File ids are picked from 28000–32767.
    - Image file format for this model: `0x48 0x00` + 16-bit RGB565 BMP (BI_BITFIELDS, masks F800/07E0/001F, rows top-down as written) + 4-byte unix timestamp.
+   - ⚠️ Web Hub bug: the BMP starts at file byte 2 and its pixel offset (54) counts from there, so the firmware reads pixels from file byte **56**. Web Hub's `convertToBMP` writes them from file byte 54, so its pictures show shifted 1 px left with the next row's first pixel in the last column (a stray line at the right edge). Write pixels at byte 56; the file size stays `2 + 54 + pixels + 4`. Verified on the keyboard 2026-11-19 with a red/blue edge test pattern.
    - GIFs: each frame is its own BMP file, plus a "GIF config" file: `u16 102, u16 frameDelayMs, u16 count, u16 fileId…`.
 3. Write a small "screen config" file: `56, 0, resourceId (u16 LE)`.
 4. Add the resource to the resource map (file 61) and the config id to the profile's screen-mode layout file.
