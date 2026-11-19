@@ -9,7 +9,7 @@ The Corsair VANGUARD AIR 99 keeps the images and GIFs you upload in **slots** on
 ## What it does
 
 - **See them all.** Every slot gets a thumbnail, and GIFs play in the preview.
-- **Replace a slot.** Pick an image or GIF (or drop one on the window). It's scaled to the 248×170 screen: filled and cropped by default, or fitted with black bars if you tick the box. Long GIFs are trimmed to 100 frames. A still image takes about 2 seconds to write; a 40-frame GIF takes about a minute.
+- **Replace a slot.** Pick an image or GIF (or drop one on the window). A preview opens: drag on the picture to choose the area you want, and see exactly what the 248×170 screen will show, black bars and all. Hold Shift for the screen's shape, or press *Fill the screen*. For GIFs, slow them down by a percentage or set your own time between frames. Long GIFs are trimmed to 100 frames. A still image takes about 2 seconds to write; a 40-frame GIF takes about a minute.
 - **Show a slot.** Double-click it, or step through them with **Previous** / **Next**.
 - **No stray line.** Pictures uploaded with Corsair's Web Hub show a flickering 1-pixel line at the right edge of the screen. That's a bug in Web Hub (details below). Pictures written by SlotDeck don't have it.
 
@@ -40,7 +40,8 @@ If you run [TrackDeck](https://github.com/yourgirljolyne/TrackDeck) (the now-pla
 SlotDeck list                    list the slots (read-only)
 SlotDeck export <folder>         save each slot's picture as a PNG (read-only)
 SlotDeck show <n>                show slot n
-SlotDeck replace <n> <file>      replace slot n with an image or GIF (add --fit for black bars)
+SlotDeck replace <n> <file>      replace slot n with an image or GIF, whole picture with black bars
+                                 (--fill crops to the screen; GIFs: --slow <percent> or --frame-ms <ms>)
 SlotDeck dump <file id>...       print raw keyboard files as hex (read-only)
 ```
 

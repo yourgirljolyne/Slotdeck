@@ -18,7 +18,7 @@ internal static class Program
                     "list" => List().GetAwaiter().GetResult(),
                     "export" => Export(args.ElementAtOrDefault(1) ?? "slots").GetAwaiter().GetResult(),
                     "show" => Show(int.Parse(args[1])).GetAwaiter().GetResult(),
-                    "replace" => Replace(int.Parse(args[1]), args[2], args.Contains("--fit")).GetAwaiter().GetResult(),
+                    "replace" => Replace(int.Parse(args[1]), args[2], args).GetAwaiter().GetResult(),
                     _ => Dump(args.Skip(1).Select(ushort.Parse).ToArray()).GetAwaiter().GetResult(),
                 };
             }
@@ -63,10 +63,16 @@ internal static class Program
         return 0;
     }
 
-    /// <summary>Replaces slot n (1-based, as in `list`) with an image or GIF file.</summary>
-    private static async Task<int> Replace(int n, string file, bool fit)
+    /// <summary>
+    /// Replaces slot n (1-based, as in `list`) with an image or GIF file: the whole picture with black bars,
+    /// or --fill to crop it to the screen. GIFs: --slow &lt;percent&gt; or --frame-ms &lt;ms&gt;.
+    /// </summary>
+    private static async Task<int> Replace(int n, string file, string[] args)
     {
-        var content = ImageCodec.Load(file, fit);
+        int? Option(string name) => Array.IndexOf(args, name) is int i and >= 0 && i + 1 < args.Length ? int.Parse(args[i + 1]) : null;
+        System.Drawing.RectangleF? area = null;
+        if (args.Contains("--fill")) using (var img = ImageCodec.Open(file)) area = ImageCodec.FillScreen(img);
+        var content = ImageCodec.Load(file, area, new GifTiming(Option("--slow") ?? 0, Option("--frame-ms")));
         using var store = new SlotStore { Log = s => Console.WriteLine("  · " + s) };
         var r = await store.ScanAsync(null);
         var sw = System.Diagnostics.Stopwatch.StartNew();

@@ -19,7 +19,6 @@ internal sealed class MainForm : Form
     private readonly Label _info = new() { AutoSize = true, MaximumSize = new Size(496, 0), Padding = new Padding(0, 8, 0, 0) };
     private readonly Button _refresh = Btn("Refresh"), _show = Btn("Show on keyboard"), _prev = Btn("◀ Previous"),
         _next = Btn("Next ▶"), _replace = Btn("Replace…");
-    private readonly CheckBox _fit = new() { Text = "Fit whole picture (black bars) instead of filling the screen", AutoSize = true };
     private readonly ToolStripStatusLabel _status = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly ToolStripProgressBar _progress = new() { Visible = false, Size = new Size(160, 16) };
     private readonly System.Windows.Forms.Timer _anim = new();
@@ -49,7 +48,7 @@ internal sealed class MainForm : Form
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Top, MaximumSize = new Size(520, 0) };
         buttons.Controls.AddRange([_show, _prev, _next, _replace, _refresh]);
         var right = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(12), WrapContents = false };
-        right.Controls.AddRange([_preview, _info, buttons, _fit]);
+        right.Controls.AddRange([_preview, _info, buttons]);
 
         var split = new SplitContainer { Dock = DockStyle.Fill, FixedPanel = FixedPanel.Panel2, SplitterWidth = 6 };
         split.Panel1.Controls.Add(_list);
@@ -162,12 +161,15 @@ internal sealed class MainForm : Form
             path = dlg.FileName;
         }
 
-        ScreenContent content;
+        // Choose the area and speed; this dialog also asks whether to go ahead.
+        RectangleF area;
+        GifTiming timing;
         try
         {
-            SetStatus("Preparing " + Path.GetFileName(path) + "…");
-            bool fit = _fit.Checked;
-            content = await Task.Run(() => ImageCodec.Load(path, fit));
+            using var crop = new CropDialog(path, $"slot {Index(slot)}", Icon);
+            if (crop.ShowDialog(this) != DialogResult.OK) return;
+            area = crop.Area;
+            timing = crop.Timing;
         }
         catch (Exception e) when (e is OutOfMemoryException or IOException or ArgumentException or UnauthorizedAccessException)
         {
@@ -175,17 +177,17 @@ internal sealed class MainForm : Form
             return;
         }
 
-        string what = content.IsGif
-            ? $"a GIF with {content.Packages.Count} frames ({content.DelayMs} ms each)" +
-              (content.SourceFrames > content.Packages.Count ? $", cut down from {content.SourceFrames} frames" : "")
-            : "a still image";
-        double seconds = content.Bytes / 67_000.0; // measured write speed over USB
-        var answer = MessageBox.Show(this,
-            $"Replace slot {Index(slot)} ({slot.Kind}) with {Path.GetFileName(path)}?\n\n" +
-            $"It will be {what}. Writing takes about {Math.Max(1, Math.Round(seconds))} s.\n" +
-            "The picture currently in this slot is overwritten and can't be brought back.",
-            "Replace slot", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
-        if (answer != DialogResult.OK) return;
+        ScreenContent content;
+        try
+        {
+            SetStatus("Preparing " + Path.GetFileName(path) + "…");
+            content = await Task.Run(() => ImageCodec.Load(path, area, timing));
+        }
+        catch (Exception e) when (e is OutOfMemoryException or IOException or ArgumentException or UnauthorizedAccessException)
+        {
+            SetStatus("Can't read that file as an image.");
+            return;
+        }
 
         await RunAsync($"Writing to slot {Index(slot)}", async progress =>
         {
@@ -336,7 +338,6 @@ internal sealed class MainForm : Form
         _show.Enabled = ok && Selected != null;
         _prev.Enabled = _next.Enabled = ok && _slots.Count > 1;
         _replace.Enabled = ok && CanReplace;
-        _fit.Enabled = ok;
     }
 
     // ---------------- helpers ----------------
