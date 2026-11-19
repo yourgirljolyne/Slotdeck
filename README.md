@@ -1,0 +1,57 @@
+# SlotDeck
+
+**See and swap the pictures on your keyboard's screen. No iCUE required.**
+
+The Corsair VANGUARD AIR 99 keeps the images and GIFs you upload in **slots** on the keyboard itself. SlotDeck is a small window that shows you what's in every slot and lets you change it, without iCUE and without touching your lighting, macros, key assignments or profiles.
+
+> Not affiliated with or endorsed by Corsair. The screen protocol was worked out from Corsair's own public Web Hub app. Use at your own risk.
+
+## What it does
+
+- **See them all.** Every slot gets a thumbnail, and GIFs play in the preview.
+- **Replace a slot.** Pick an image or GIF (or drop one on the window). It's scaled to the 248×170 screen: filled and cropped by default, or fitted with black bars if you tick the box. Long GIFs are trimmed to 100 frames. A still image takes about 2 seconds to write; a 40-frame GIF takes about a minute.
+- **Show a slot.** Double-click it, or step through them with **Previous** / **Next**.
+
+## Get it running
+
+1. Grab `SlotDeck.exe` from [Releases](../../releases), or build it yourself (below).
+2. Install the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) if you don't have it.
+3. Plug the keyboard in with the **USB cable** and close iCUE.
+4. Run `SlotDeck.exe`.
+
+## Why not FN + arrows?
+
+On the Air 99, the list that FN + arrows walks through belongs to the keyboard **profile**, and the default profile doesn't have one, so images uploaded with Web Hub never end up in it. SlotDeck leaves profiles alone, so the cycling happens in the app instead. Details in [docs/vanguard-screen-protocol.md](docs/vanguard-screen-protocol.md).
+
+## Plays nice with TrackDeck
+
+If you run [TrackDeck](https://github.com/yourgirljolyne/TrackDeck) (the now-playing card), its card shows up as a slot too, read-only, because TrackDeck rewrites it on every song. While TrackDeck is running, it puts its card back on the next track change.
+
+## Command line
+
+```
+SlotDeck list                    list the slots (read-only)
+SlotDeck export <folder>         save each slot's picture as a PNG (read-only)
+SlotDeck show <n>                show slot n
+SlotDeck replace <n> <file>      replace slot n with an image or GIF (add --fit for black bars)
+SlotDeck dump <file id>...       print raw keyboard files as hex (read-only)
+```
+
+## Build it yourself
+
+Needs the .NET 10 SDK on Windows. No NuGet packages.
+
+```
+cd SlotDeck
+dotnet publish -c Release -r win-x64 -o dist -p:PublishSingleFile=true -p:SelfContained=false
+```
+
+## Known limits
+
+- **USB cable only.** The SLIPSTREAM wireless receiver doesn't pass screen commands on (Corsair's own Web Hub can't either).
+- Tested on the VANGUARD AIR 99 only.
+- The picture you replace is gone for good. SlotDeck backs up the small index files it changes to `%LOCALAPPDATA%\SlotDeck\backups`, not the pictures; run `SlotDeck export` first if you want copies.
+
+## License
+
+[MIT](LICENSE).
