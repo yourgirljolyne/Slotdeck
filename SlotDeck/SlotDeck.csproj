@@ -9,6 +9,12 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>SlotDeck</AssemblyName>
     <RootNamespace>SlotDeck</RootNamespace>
+    <ApplicationIcon>slotdeck.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Also embedded so the window's title bar and taskbar button use it -->
+    <EmbeddedResource Include="slotdeck.ico" LogicalName="slotdeck.ico" />
+  </ItemGroup>
 
 </Project>

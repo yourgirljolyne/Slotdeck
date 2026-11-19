@@ -52,6 +52,10 @@ dotnet publish -c Release -r win-x64 -o dist -p:PublishSingleFile=true -p:SelfCo
 - Tested on the VANGUARD AIR 99 only.
 - The picture you replace is gone for good. SlotDeck backs up the small index files it changes to `%LOCALAPPDATA%\SlotDeck\backups`, not the pictures; run `SlotDeck export` first if you want copies.
 
+## Credits
+
+App icon: keyboard icon by [Icons8](https://icons8.com) (iOS 7 Icons set), used under the [Icons8 license](https://icons8.com/license/).
+
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE) for the code. The app icon is under the Icons8 license above.

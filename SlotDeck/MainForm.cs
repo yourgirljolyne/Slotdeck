@@ -35,6 +35,8 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Text = "SlotDeck";
+        using (var ico = typeof(MainForm).Assembly.GetManifestResourceStream("slotdeck.ico"))
+            if (ico != null) Icon = new Icon(ico);
         Font = new Font("Segoe UI", 9.5f);
         ClientSize = new Size(1060, 620);
         MinimumSize = new Size(900, 560);
