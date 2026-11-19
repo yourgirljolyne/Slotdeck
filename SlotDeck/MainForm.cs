@@ -119,6 +119,9 @@ internal sealed class MainForm : Form
     private Task ScanAsync() => RunAsync("Looking for slots on the keyboard", async progress =>
     {
         var result = await _store.ScanAsync(progress);
+        // Slots may have changed elsewhere (Web Hub, the command line), so reload every preview.
+        _frames.Clear();
+        foreach (var key in _thumbs.Images.Keys.Cast<string>().Where(k => k != "loading").ToList()) _thumbs.Images.RemoveByKey(key);
         _slots = result.Slots;
         _activeId = result.ActiveId;
         RebuildList();
@@ -185,7 +188,10 @@ internal sealed class MainForm : Form
         await RunAsync($"Writing to slot {Index(slot)}", async progress =>
         {
             var updated = await _store.ReplaceAsync(slot, content, _slots, progress);
+            // A replaced still image keeps its picture file id, so the cached frame and thumbnail must both go.
             foreach (var id in slot.Resources.Concat(updated.Resources)) _frames.Remove(id);
+            ForgetThumbnail(slot);
+            ForgetThumbnail(updated);
             _slots[_slots.IndexOf(slot)] = updated;
             RebuildList(select: updated.Id);
             SetStatus($"Slot {Index(updated)} replaced." + (updated.Id == _activeId ? " It's on the screen now." : " Press Show to put it on the screen."));
@@ -231,9 +237,9 @@ internal sealed class MainForm : Form
         foreach (ListViewItem item in _list.Items)
         {
             if (item.Tag is not Slot s || s.Resources[0] != id) continue;
-            string key = "slot" + s.Id + "-" + id;
-            if (!_thumbs.Images.ContainsKey(key))
-                _thumbs.Images.Add(key, _frames[id] is { } f ? Thumbnail(f) : Placeholder("?"));
+            string key = ThumbKey(s);
+            _thumbs.Images.RemoveByKey(key); // a fresh read always wins over an older thumbnail
+            _thumbs.Images.Add(key, _frames[id] is { } f ? Thumbnail(f) : Placeholder("?"));
             item.ImageKey = key;
         }
         if (Selected is { } sel && sel.Resources[0] == id && _preview.Image == null) ShowFrame(sel, 0);
@@ -287,6 +293,10 @@ internal sealed class MainForm : Form
 
     // ---------------- list ----------------
 
+    private static string ThumbKey(Slot s) => "slot" + s.Id + "-" + s.Resources[0];
+
+    private void ForgetThumbnail(Slot s) => _thumbs.Images.RemoveByKey(ThumbKey(s));
+
     private void RebuildList(ushort? select = null)
     {
         ushort? keep = select ?? Selected?.Id ?? _activeId;
@@ -294,7 +304,7 @@ internal sealed class MainForm : Form
         _list.Items.Clear();
         foreach (var s in _slots)
         {
-            string key = "slot" + s.Id + "-" + s.Resources[0];
+            string key = ThumbKey(s);
             _list.Items.Add(new ListViewItem(Label(s)) { Tag = s, ImageKey = _thumbs.Images.ContainsKey(key) ? key : "loading" });
         }
         _list.EndUpdate();
