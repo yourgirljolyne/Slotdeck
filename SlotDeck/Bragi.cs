@@ -25,7 +25,8 @@ public sealed class Bragi : IDisposable
 
     // Property ids
     public const ushort PropOperatingMode = 3, PropFreeStorage = 62, PropScreenPresent = 230,
-        PropScreenWidth = 242, PropScreenHeight = 243, PropScreenIndex = 263;
+        PropScreenWidth = 242, PropScreenHeight = 243, PropScreenIndex = 263,
+        PropActiveProfile = 110; // index into the profile list (file 15)
 
     public const uint ModeSelfOperated = 1, ModeHostControlled = 2;
 

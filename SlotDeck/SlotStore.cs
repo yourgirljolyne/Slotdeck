@@ -240,7 +240,7 @@ public sealed class SlotStore : IDisposable
     /// <summary>The keyboard's built-in screen; Web Hub always puts it first in a profile's screen list.</summary>
     public const ushort BuiltInScreen = 28007;
 
-    /// <summary>A profile file, and where its screen-list pointer sits.</summary>
+    /// <summary>The active profile's file, and where its screen-list pointer sits.</summary>
     private sealed record ProfileFile(ushort Id, byte[] Bytes, int LayoutAt)
     {
         public ushort LayoutId => Slot.Le16(Bytes, LayoutAt);
@@ -251,8 +251,11 @@ public sealed class SlotStore : IDisposable
     {
         var list = await b.ReadFileAsync(ProfileList) ?? throw new BragiException("The keyboard has no profile list.");
         int count = list.Length >= 4 ? Slot.Le16(list, 2) : 0;
-        if (count != 1) throw new BragiException($"The keyboard has {count} profiles; SlotDeck only handles a single profile so far.");
-        ushort id = Slot.Le16(list, 4);
+        if (count == 0 || list.Length < 4 + count * 2) throw new BragiException("The keyboard has no profiles.");
+        // Only ever the profile the keyboard is using right now; other profiles are left alone.
+        uint active = await b.GetPropertyAsync(Bragi.PropActiveProfile);
+        if (active >= count) throw new BragiException($"The keyboard reports active profile {active + 1}, but has only {count}.");
+        ushort id = Slot.Le16(list, 4 + (int)active * 2);
         var p = await b.ReadFileAsync(id) ?? throw new BragiException($"Profile file {id} is missing.");
         // Profile: header, cookie (2-5), file pointers, name length (30), name + 0, then 4 pointers; the screen list is last.
         int layoutAt = p.Length >= 32 ? 33 + Slot.Le16(p, 30) + 6 : int.MaxValue;
