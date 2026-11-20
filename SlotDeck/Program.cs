@@ -7,7 +7,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         string cmd = args.Length > 0 ? args[0].ToLowerInvariant() : "";
-        if (cmd is "list" or "dump" or "export" or "show" or "replace")
+        if (cmd is "list" or "dump" or "export" or "show" or "replace" or "screenlist")
         {
             AttachConsole(-1);
             Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
@@ -18,6 +18,7 @@ internal static class Program
                     "list" => List().GetAwaiter().GetResult(),
                     "export" => Export(args.ElementAtOrDefault(1) ?? "slots").GetAwaiter().GetResult(),
                     "show" => Show(int.Parse(args[1])).GetAwaiter().GetResult(),
+                    "screenlist" => ScreenList(args.ElementAtOrDefault(1)).GetAwaiter().GetResult(),
                     "replace" => Replace(int.Parse(args[1]), args[2], args).GetAwaiter().GetResult(),
                     _ => Dump(args.Skip(1).Select(ushort.Parse).ToArray()).GetAwaiter().GetResult(),
                 };
@@ -79,6 +80,19 @@ internal static class Program
         var updated = await store.ReplaceAsync(r.Slots[n - 1], content, r.Slots, null);
         await store.CloseAsync();
         Console.WriteLine($"Slot {n} is now {updated.Kind} ({sw.Elapsed.TotalSeconds:0.0} s).");
+        return 0;
+    }
+
+    /// <summary>Shows the profile's screen list; "create" makes one from the slots, "remove" takes it away again.</summary>
+    private static async Task<int> ScreenList(string? action)
+    {
+        using var store = new SlotStore { Log = s => Console.WriteLine("  · " + s) };
+        var r = await store.ScanAsync(null);
+        if (action == "create") Console.WriteLine($"Screen list created: file {await store.CreateScreenListAsync(r.Slots)}.");
+        else if (action == "remove") Console.WriteLine($"Screen list removed (was file {await store.RemoveScreenListAsync()}).");
+        var list = await store.ReadScreenListAsync();
+        Console.WriteLine(list == null ? "The profile has no screen list." : "Screen list: " + string.Join(", ", list));
+        await store.CloseAsync();
         return 0;
     }
 

@@ -233,6 +233,131 @@ public sealed class SlotStore : IDisposable
         throw new BragiException("No free file ids left on the keyboard.");
     }
 
+    // ---------------- the profile's screen list ----------------
+
+    private const ushort ProfileList = 15;
+    private const byte LayoutHeader = 55;
+    /// <summary>The keyboard's built-in screen; Web Hub always puts it first in a profile's screen list.</summary>
+    public const ushort BuiltInScreen = 28007;
+
+    /// <summary>A profile file, and where its screen-list pointer sits.</summary>
+    private sealed record ProfileFile(ushort Id, byte[] Bytes, int LayoutAt)
+    {
+        public ushort LayoutId => Slot.Le16(Bytes, LayoutAt);
+        public ushort PropertiesId => Slot.Le16(Bytes, 8);
+    }
+
+    private static async Task<ProfileFile> ReadProfileAsync(Bragi b)
+    {
+        var list = await b.ReadFileAsync(ProfileList) ?? throw new BragiException("The keyboard has no profile list.");
+        int count = list.Length >= 4 ? Slot.Le16(list, 2) : 0;
+        if (count != 1) throw new BragiException($"The keyboard has {count} profiles; SlotDeck only handles a single profile so far.");
+        ushort id = Slot.Le16(list, 4);
+        var p = await b.ReadFileAsync(id) ?? throw new BragiException($"Profile file {id} is missing.");
+        // Profile: header, cookie (2-5), file pointers, name length (30), name + 0, then 4 pointers; the screen list is last.
+        int layoutAt = p.Length >= 32 ? 33 + Slot.Le16(p, 30) + 6 : int.MaxValue;
+        if (p.Length < layoutAt + 2) throw new BragiException($"Profile file {id} has a layout SlotDeck doesn't know.");
+        return new ProfileFile(id, p, layoutAt);
+    }
+
+    /// <summary>Screen list file: 55 0, row count, then per row: count and u16 entry ids.</summary>
+    public static byte[] LayoutFile(IReadOnlyList<ushort> ids)
+    {
+        if (ids.Count > 255) throw new ArgumentException("Too many screens for one row.");
+        var b = new byte[4 + ids.Count * 2];
+        b[0] = LayoutHeader;
+        b[2] = 1;
+        b[3] = (byte)ids.Count;
+        for (int i = 0; i < ids.Count; i++) BinaryPrimitives.WriteUInt16LittleEndian(b.AsSpan(4 + i * 2), ids[i]);
+        return b;
+    }
+
+    public static ushort[]? ParseLayout(byte[]? d)
+    {
+        if (d is not { Length: >= 4 } || d[0] != LayoutHeader || d[2] < 1 || d.Length < 4 + d[3] * 2) return null;
+        return Enumerable.Range(0, d[3]).Select(i => Slot.Le16(d, 4 + i * 2)).ToArray();
+    }
+
+    /// <summary>The profile's screen list (null if it has none). Read-only.</summary>
+    public Task<ushort[]?> ReadScreenListAsync() => Read(async b =>
+    {
+        var p = await ReadProfileAsync(b);
+        return p.LayoutId == 0 ? null : ParseLayout(await b.ReadFileAsync(p.LayoutId));
+    });
+
+    /// <summary>
+    /// Gives the profile a screen list (the built-in screen, then the slots), like Web Hub does when it imports a
+    /// profile. Without one the keyboard has nothing to show at power-on and FN + arrows do nothing.
+    /// Changes only the list pointer and the cookie in the profile file; backs everything up first.
+    /// </summary>
+    public Task<ushort> CreateScreenListAsync(IReadOnlyList<Slot> slots) => Write(async b =>
+    {
+        await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeHostControlled);
+        try
+        {
+            var p = await ReadProfileAsync(b);
+            if (p.LayoutId != 0) throw new InvalidOperationException($"Profile {p.Id} already has a screen list (file {p.LayoutId}).");
+            Log?.Invoke("backup: " + BackupFiles("screen-list", (ProfileList, await b.ReadFileAsync(ProfileList)), (p.Id, p.Bytes),
+                (p.PropertiesId, await b.ReadFileAsync(p.PropertiesId))));
+
+            ushort layoutId = await AllocateAsync(b);
+            var layout = LayoutFile([BuiltInScreen, .. slots.Select(s => s.Id)]);
+            await b.WriteFileAsync(layoutId, layout);
+            if (!(await b.ReadFileAsync(layoutId) ?? []).AsSpan().SequenceEqual(layout))
+                throw new BragiException($"The screen list (file {layoutId}) didn't read back correctly.");
+            Log?.Invoke($"screen list {layoutId}: {Convert.ToHexString(layout)}");
+
+            await WriteProfileAsync(b, p, layoutId);
+            return layoutId;
+        }
+        finally { await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeSelfOperated); }
+    });
+
+    /// <summary>Undo: sets the profile's list pointer back to 0 and deletes the list file.</summary>
+    public Task<ushort> RemoveScreenListAsync() => Write(async b =>
+    {
+        await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeHostControlled);
+        try
+        {
+            var p = await ReadProfileAsync(b);
+            ushort layoutId = p.LayoutId;
+            if (layoutId == 0) return (ushort)0;
+            Log?.Invoke("backup: " + BackupFiles("screen-list-removed", (p.Id, p.Bytes), (layoutId, await b.ReadFileAsync(layoutId))));
+            await WriteProfileAsync(b, p, 0);
+            await b.DeleteFileAsync(layoutId);
+            return layoutId;
+        }
+        finally { await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeSelfOperated); }
+    });
+
+    /// <summary>Sets the list pointer and a new cookie (so the keyboard reloads the profile), nothing else.</summary>
+    private async Task WriteProfileAsync(Bragi b, ProfileFile p, ushort layoutId)
+    {
+        var fresh = await b.ReadFileAsync(p.Id);
+        if (fresh == null || !fresh.AsSpan().SequenceEqual(p.Bytes))
+            throw new BragiException($"Profile {p.Id} changed while SlotDeck was working; nothing written to it.");
+        var updated = (byte[])p.Bytes.Clone();
+        uint old = BinaryPrimitives.ReadUInt32LittleEndian(p.Bytes.AsSpan(2)), now = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        BinaryPrimitives.WriteUInt32LittleEndian(updated.AsSpan(2), now == old ? now + 1 : now);
+        BinaryPrimitives.WriteUInt16LittleEndian(updated.AsSpan(p.LayoutAt), layoutId);
+        for (int i = 0; i < updated.Length; i++)
+            if (updated[i] != p.Bytes[i] && i is not (>= 2 and <= 5) && i != p.LayoutAt && i != p.LayoutAt + 1)
+                throw new InvalidOperationException("Profile update would change more than the list pointer and cookie.");
+        await b.WriteFileAsync(p.Id, updated);
+        if (!(await b.ReadFileAsync(p.Id) ?? []).AsSpan().SequenceEqual(updated))
+            throw new BragiException($"Profile {p.Id} didn't read back correctly. A backup is in {Path.Combine(DataDir, "backups")}.");
+        Log?.Invoke($"profile {p.Id}: screen list -> {layoutId}");
+    }
+
+    private static string BackupFiles(string what, params (ushort Id, byte[]? Data)[] files)
+    {
+        var dir = Path.Combine(DataDir, "backups", DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + what);
+        Directory.CreateDirectory(dir);
+        foreach (var (id, data) in files)
+            if (data != null) File.WriteAllBytes(Path.Combine(dir, $"file-{id}.bin"), data);
+        return dir;
+    }
+
     /// <summary>Keeps a copy of the small files we change (resource map, slot entry) once per run.</summary>
     private void BackupOnce(byte[] map, Slot slot)
     {

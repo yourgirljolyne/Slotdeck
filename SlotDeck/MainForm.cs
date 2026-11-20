@@ -18,7 +18,7 @@ internal sealed class MainForm : Form
     };
     private readonly Label _info = new() { AutoSize = true, MaximumSize = new Size(496, 0), Padding = new Padding(0, 8, 0, 0) };
     private readonly Button _refresh = Btn("Refresh"), _show = Btn("Show on keyboard"), _prev = Btn("◀ Previous"),
-        _next = Btn("Next ▶"), _replace = Btn("Replace…");
+        _next = Btn("Next ▶"), _replace = Btn("Replace…"), _fixStartup = Btn("Fix startup screen…");
     private readonly ToolStripStatusLabel _status = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly ToolStripProgressBar _progress = new() { Visible = false, Size = new Size(160, 16) };
     private readonly System.Windows.Forms.Timer _anim = new();
@@ -46,7 +46,8 @@ internal sealed class MainForm : Form
         _thumbs.Images.Add("loading", Placeholder("…"));
 
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Top, MaximumSize = new Size(520, 0) };
-        buttons.Controls.AddRange([_show, _prev, _next, _replace, _refresh]);
+        buttons.Controls.AddRange([_show, _prev, _next, _replace, _refresh, _fixStartup]);
+        _fixStartup.Visible = false;
         var right = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(12), WrapContents = false };
         right.Controls.AddRange([_preview, _info, buttons]);
 
@@ -61,6 +62,7 @@ internal sealed class MainForm : Form
 
         _tips.SetToolTip(_prev, "Show the previous slot (stands in for FN + ←)");
         _tips.SetToolTip(_next, "Show the next slot (stands in for FN + →)");
+        _tips.SetToolTip(_fixStartup, "Your profile has no screen list, so the keyboard keeps its logo animation at power-on and FN + arrows do nothing.");
         _tips.SetToolTip(_replace, "Pick an image or GIF to put in this slot. You can also drop a file onto the window.");
 
         _refresh.Click += async (_, _) => await ScanAsync();
@@ -68,6 +70,7 @@ internal sealed class MainForm : Form
         _prev.Click += async (_, _) => await StepAsync(-1);
         _next.Click += async (_, _) => await StepAsync(+1);
         _replace.Click += async (_, _) => await ReplaceAsync(null);
+        _fixStartup.Click += async (_, _) => await FixStartupAsync();
         _list.SelectedIndexChanged += (_, _) => OnSelectionChanged();
         _list.DoubleClick += async (_, _) => { if (Selected is { } s) await ShowAsync(s); };
         _anim.Tick += (_, _) => Animate();
@@ -126,8 +129,34 @@ internal sealed class MainForm : Form
         _slots = result.Slots;
         _activeId = result.ActiveId;
         RebuildList();
+        await CheckScreenListAsync();
         SetStatus(_slots.Count == 0 ? "No image or GIF slots found." : $"{_slots.Count} slots found." + TrackDeckHint());
     });
+
+    /// <summary>Offers the startup fix only when the profile has no screen list (and SlotDeck can read the profile).</summary>
+    private async Task CheckScreenListAsync()
+    {
+        try { _fixStartup.Visible = _slots.Count > 0 && await _store.ReadScreenListAsync() == null; }
+        catch (BragiException) { _fixStartup.Visible = false; }
+    }
+
+    private async Task FixStartupAsync()
+    {
+        var answer = MessageBox.Show(this,
+            "Your keyboard's profile has no screen list. Without one, the keyboard keeps playing its logo animation at " +
+            "power-on until an app sets a picture, and FN + arrows do nothing.\n\n" +
+            "SlotDeck can add a list with the built-in screen and your slots, the way Web Hub does when it imports a profile. " +
+            "In the profile itself only the list pointer and its timestamp change, and a backup is kept.\n\n" +
+            "To undo it later: SlotDeck screenlist remove",
+            "Fix startup screen", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+        if (answer != DialogResult.OK) return;
+        await RunAsync("Adding a screen list to the profile", async _ =>
+        {
+            ushort id = await _store.CreateScreenListAsync(_slots);
+            await CheckScreenListAsync();
+            SetStatus($"Screen list added (file {id}). Replug the keyboard: it now starts on your picture, and FN + arrows cycle the slots.");
+        });
+    }
 
     private Task ShowAsync(Slot slot) => RunAsync($"Showing slot {slot.Id}", async _ =>
     {
@@ -338,6 +367,7 @@ internal sealed class MainForm : Form
         _show.Enabled = ok && Selected != null;
         _prev.Enabled = _next.Enabled = ok && _slots.Count > 1;
         _replace.Enabled = ok && CanReplace;
+        _fixStartup.Enabled = ok;
     }
 
     // ---------------- helpers ----------------

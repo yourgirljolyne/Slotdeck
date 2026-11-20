@@ -2,7 +2,7 @@
 
 **See and swap the pictures on your keyboard's screen. No iCUE required.**
 
-The Corsair VANGUARD AIR 99 keeps the images and GIFs you upload in **slots** on the keyboard itself. SlotDeck is a small window that shows you what's in every slot and lets you change it, without iCUE and without touching your lighting, macros, key assignments or profiles.
+The Corsair VANGUARD AIR 99 keeps the images and GIFs you upload in **slots** on the keyboard itself. SlotDeck is a small window that shows you what's in every slot and lets you change it, without iCUE and without touching your lighting, macros or key assignments. It only touches your profile if you ask it to fix the startup screen (see below).
 
 > Not affiliated with or endorsed by Corsair. The screen protocol was worked out from Corsair's own public Web Hub app. Use at your own risk.
 
@@ -26,9 +26,11 @@ SlotDeck writes the pixels where the keyboard reads them. Its previews read pict
 3. Plug the keyboard in with the **USB cable** and close iCUE.
 4. Run `SlotDeck.exe`.
 
-## Why not FN + arrows?
+## Stuck on the Corsair logo? FN + arrows do nothing?
 
-On the Air 99, the list that FN + arrows walks through belongs to the keyboard **profile**, and the default profile doesn't have one, so images uploaded with Web Hub never end up in it. SlotDeck leaves profiles alone, so the cycling happens in the app instead. Details in [docs/vanguard-screen-protocol.md](docs/vanguard-screen-protocol.md).
+Same cause for both. The keyboard picks its screen at power-on from a **screen list** that belongs to the profile, and FN + arrows walk that same list. Web Hub only creates one when it imports a profile, so the default profile usually has none. With nothing to show, the keyboard spins its logo animation forever, until an app (SlotDeck, TrackDeck) sets a picture.
+
+If that's you, SlotDeck shows a **Fix startup screen…** button. It adds a list with the built-in screen and your slots, exactly like Web Hub's. In the profile only the list pointer and its timestamp change; a backup goes to `%LOCALAPPDATA%\SlotDeckackups` first. Replug the keyboard and it starts on your picture. Changed your mind? `SlotDeck screenlist remove` takes it out again. Details in [docs/vanguard-screen-protocol.md](docs/vanguard-screen-protocol.md).
 
 ## Plays nice with TrackDeck
 
@@ -42,6 +44,7 @@ SlotDeck export <folder>         save each slot's picture as a PNG (read-only)
 SlotDeck show <n>                show slot n
 SlotDeck replace <n> <file>      replace slot n with an image or GIF, whole picture with black bars
                                  (--fill crops to the screen; GIFs: --slow <percent> or --frame-ms <ms>)
+SlotDeck screenlist [create|remove]  show, add or remove the profile's screen list
 SlotDeck dump <file id>...       print raw keyboard files as hex (read-only)
 ```
 
