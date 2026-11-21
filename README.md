@@ -30,7 +30,7 @@ SlotDeck writes the pixels where the keyboard reads them. Its previews read pict
 
 Same cause for both. The keyboard picks its screen at power-on from a **screen list** that belongs to the profile, and FN + arrows walk that same list. Web Hub only creates one when it imports a profile, so the default profile usually has none. With nothing to show, the keyboard spins its logo animation forever, until an app (SlotDeck, TrackDeck) sets a picture.
 
-If that's you, SlotDeck shows a **Fix startup screen…** button. It adds a list with the built-in screen and your slots, exactly like Web Hub's. In the profile only the list pointer and its timestamp change; a backup goes to `%LOCALAPPDATA%\SlotDeckackups` first. Replug the keyboard and it starts on your picture. Changed your mind? `SlotDeck screenlist remove` takes it out again. Details in [docs/vanguard-screen-protocol.md](docs/vanguard-screen-protocol.md).
+If that's you, SlotDeck shows a **Fix startup screen…** button. It adds a list with the built-in screen and your slots, exactly like Web Hub's. In the profile only the list pointer and its timestamp change; a backup goes to `%LOCALAPPDATA%\SlotDeck\backups` first. Replug the keyboard and it starts on your picture. Changed your mind? `SlotDeck screenlist remove` takes it out again. Details in [docs/vanguard-screen-protocol.md](docs/vanguard-screen-protocol.md).
 
 ## Plays nice with TrackDeck
 
