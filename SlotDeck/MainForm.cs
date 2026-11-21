@@ -3,7 +3,7 @@ using System.Drawing;
 
 namespace SlotDeck;
 
-/// <summary>Lists the keyboard's screen slots with previews; shows, cycles and replaces them.</summary>
+/// <summary>Lists the keyboard's screen slots with previews; shows, cycles, adds, replaces and removes them.</summary>
 internal sealed class MainForm : Form
 {
     private readonly SlotStore _store = new();
@@ -18,13 +18,15 @@ internal sealed class MainForm : Form
     };
     private readonly Label _info = new() { AutoSize = true, MaximumSize = new Size(496, 0), Padding = new Padding(0, 8, 0, 0) };
     private readonly Button _refresh = Btn("Refresh"), _show = Btn("Show on keyboard"), _prev = Btn("◀ Previous"),
-        _next = Btn("Next ▶"), _replace = Btn("Replace…"), _fixStartup = Btn("Fix startup screen…");
+        _next = Btn("Next ▶"), _add = Btn("Add…"), _replace = Btn("Replace…"), _remove = Btn("Remove"),
+        _fixStartup = Btn("Fix startup screen…");
     private readonly ToolStripStatusLabel _status = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly ToolStripProgressBar _progress = new() { Visible = false, Size = new Size(160, 16) };
     private readonly System.Windows.Forms.Timer _anim = new();
     private readonly ToolTip _tips = new();
 
-    private List<Slot> _slots = [];
+    private List<Slot> _all = [];   // every slot on the keyboard, TrackDeck's card included
+    private List<Slot> _slots = [];  // the ones listed: TrackDeck manages its card itself, so it's left out
     private ushort? _activeId;
     private readonly Dictionary<ushort, Bitmap?> _frames = []; // picture file id -> decoded frame (null = unreadable)
     private bool _busy, _closing;
@@ -46,7 +48,7 @@ internal sealed class MainForm : Form
         _thumbs.Images.Add("loading", Placeholder("…"));
 
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Top, MaximumSize = new Size(520, 0) };
-        buttons.Controls.AddRange([_show, _prev, _next, _replace, _refresh, _fixStartup]);
+        buttons.Controls.AddRange([_show, _prev, _next, _add, _replace, _remove, _refresh, _fixStartup]);
         _fixStartup.Visible = false;
         var right = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, Padding = new Padding(12), WrapContents = false };
         right.Controls.AddRange([_preview, _info, buttons]);
@@ -63,21 +65,30 @@ internal sealed class MainForm : Form
         _tips.SetToolTip(_prev, "Show the previous slot (stands in for FN + ←)");
         _tips.SetToolTip(_next, "Show the next slot (stands in for FN + →)");
         _tips.SetToolTip(_fixStartup, "Your profile has no screen list, so the keyboard keeps its logo animation at power-on and FN + arrows do nothing.");
+        _tips.SetToolTip(_add, "Add a new slot with an image or GIF. FN + arrows reach it too.");
         _tips.SetToolTip(_replace, "Pick an image or GIF to put in this slot. You can also drop a file onto the window.");
+        _tips.SetToolTip(_remove, "Delete this slot and its pictures from the keyboard.");
 
         _refresh.Click += async (_, _) => await ScanAsync();
         _show.Click += async (_, _) => { if (Selected is { } s) await ShowAsync(s); };
         _prev.Click += async (_, _) => await StepAsync(-1);
         _next.Click += async (_, _) => await StepAsync(+1);
+        _add.Click += async (_, _) => await AddAsync(null);
         _replace.Click += async (_, _) => await ReplaceAsync(null);
+        _remove.Click += async (_, _) => await RemoveAsync();
         _fixStartup.Click += async (_, _) => await FixStartupAsync();
         _list.SelectedIndexChanged += (_, _) => OnSelectionChanged();
         _list.DoubleClick += async (_, _) => { if (Selected is { } s) await ShowAsync(s); };
         _anim.Tick += (_, _) => Animate();
         foreach (Control c in new Control[] { this, _list, _preview })
         {
-            c.DragEnter += (_, e) => e.Effect = DroppedFile(e) != null && CanReplace ? DragDropEffects.Copy : DragDropEffects.None;
-            c.DragDrop += async (_, e) => { if (DroppedFile(e) is { } f) await ReplaceAsync(f); };
+            // A dropped file replaces the selected slot, or becomes a new one when there's nothing to replace.
+            c.DragEnter += (_, e) => e.Effect = DroppedFile(e) != null && !_busy ? DragDropEffects.Copy : DragDropEffects.None;
+            c.DragDrop += async (_, e) =>
+            {
+                if (DroppedFile(e) is not { } f) return;
+                if (CanReplace) await ReplaceAsync(f); else await AddAsync(f);
+            };
         }
 
         Shown += async (_, _) => await ScanAsync();
@@ -126,11 +137,12 @@ internal sealed class MainForm : Form
         // Slots may have changed elsewhere (Web Hub, the command line), so reload every preview.
         _frames.Clear();
         foreach (var key in _thumbs.Images.Keys.Cast<string>().Where(k => k != "loading").ToList()) _thumbs.Images.RemoveByKey(key);
-        _slots = result.Slots;
+        _all = result.Slots;
+        _slots = _all.Where(s => !s.IsTrackDeck).ToList();
         _activeId = result.ActiveId;
         RebuildList();
         await CheckScreenListAsync();
-        SetStatus(_slots.Count == 0 ? "No image or GIF slots found." : $"{_slots.Count} slots found." + TrackDeckHint());
+        SetStatus(_slots.Count == 0 ? "No image or GIF slots yet. Press Add to put one on the keyboard." : $"{_slots.Count} slots found." + TrackDeckHint());
     });
 
     /// <summary>Offers the startup fix only when the profile has no screen list (and SlotDeck can read the profile).</summary>
@@ -152,7 +164,7 @@ internal sealed class MainForm : Form
         if (answer != DialogResult.OK) return;
         await RunAsync("Adding a screen list to the profile", async _ =>
         {
-            ushort id = await _store.CreateScreenListAsync(_slots);
+            ushort id = await _store.CreateScreenListAsync(_all);
             await CheckScreenListAsync();
             SetStatus($"Screen list added (file {id}). Replug the keyboard: it now starts on your picture, and FN + arrows cycle the slots.");
         });
@@ -179,14 +191,74 @@ internal sealed class MainForm : Form
     private async Task ReplaceAsync(string? path)
     {
         if (Selected is not { } slot || !CanReplace) return;
+        if (await PickAsync(path, $"Replace slot {Index(slot)}", $"slot {Index(slot)}") is not { } content) return;
+
+        await RunAsync($"Writing to slot {Index(slot)}", async progress =>
+        {
+            var updated = await _store.ReplaceAsync(slot, content, _all, progress);
+            // A replaced still image keeps its picture file id, so the cached frame and thumbnail must both go.
+            foreach (var id in slot.Resources.Concat(updated.Resources)) _frames.Remove(id);
+            ForgetThumbnail(slot);
+            ForgetThumbnail(updated);
+            _all[_all.IndexOf(slot)] = updated;
+            _slots[_slots.IndexOf(slot)] = updated;
+            RebuildList(select: updated.Id);
+            SetStatus($"Slot {Index(updated)} replaced." + (updated.Id == _activeId ? " It's on the screen now." : " Press Show to put it on the screen."));
+        });
+    }
+
+    private async Task AddAsync(string? path)
+    {
+        if (_busy) return;
+        if (await PickAsync(path, "Add a slot", "new slot " + (_slots.Count + 1)) is not { } content) return;
+
+        await RunAsync("Adding a slot", async progress =>
+        {
+            var added = await _store.AddAsync(content, _all, progress);
+            _all.Add(added);
+            _slots.Add(added);
+            _activeId = added.Id;
+            RebuildList(select: added.Id);
+            await CheckScreenListAsync();
+            SetStatus($"Slot {Index(added)} added and on the screen. FN + arrows reach it too.");
+        });
+    }
+
+    private async Task RemoveAsync()
+    {
+        if (Selected is not { } slot || !CanReplace) return;
+        int n = Index(slot);
+        if (MessageBox.Show(this, $"Remove slot {n} ({slot.Kind})?\n\nIts pictures are deleted from the keyboard for good.",
+                "Remove slot", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+
+        // If it's on the screen, the next slot takes its place.
+        var others = _slots.Where(s => s.Id != slot.Id).ToList();
+        var instead = others.Count == 0 ? null : others[Math.Min(n - 1, others.Count - 1)];
+        await RunAsync($"Removing slot {n}", async _ =>
+        {
+            bool wasShown = slot.Id == _activeId;
+            await _store.RemoveAsync(slot, _all, instead);
+            foreach (var id in slot.Resources) _frames.Remove(id);
+            ForgetThumbnail(slot);
+            _all.Remove(slot);
+            _slots.Remove(slot);
+            if (wasShown) _activeId = instead?.Id;
+            RebuildList(select: instead?.Id);
+            SetStatus($"Slot {n} removed." + (wasShown ? instead != null ? $" Slot {Index(instead)} is on the screen now." : " The built-in screen is on now." : ""));
+        });
+    }
+
+    /// <summary>Asks for a file (unless one was dropped), lets the user crop it and prepares it for the keyboard.</summary>
+    private async Task<ScreenContent?> PickAsync(string? path, string title, string target)
+    {
         if (path == null)
         {
             using var dlg = new OpenFileDialog
             {
-                Title = $"Replace slot {Index(slot)}",
+                Title = title,
                 Filter = "Images and GIFs|*.gif;*.png;*.jpg;*.jpeg;*.bmp|All files|*.*",
             };
-            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            if (dlg.ShowDialog(this) != DialogResult.OK) return null;
             path = dlg.FileName;
         }
 
@@ -195,40 +267,27 @@ internal sealed class MainForm : Form
         GifTiming timing;
         try
         {
-            using var crop = new CropDialog(path, $"slot {Index(slot)}", Icon);
-            if (crop.ShowDialog(this) != DialogResult.OK) return;
+            using var crop = new CropDialog(path, target, Icon);
+            if (crop.ShowDialog(this) != DialogResult.OK) return null;
             area = crop.Area;
             timing = crop.Timing;
         }
         catch (Exception e) when (e is OutOfMemoryException or IOException or ArgumentException or UnauthorizedAccessException)
         {
             SetStatus("Can't read that file as an image.");
-            return;
+            return null;
         }
 
-        ScreenContent content;
         try
         {
             SetStatus("Preparing " + Path.GetFileName(path) + "…");
-            content = await Task.Run(() => ImageCodec.Load(path, area, timing));
+            return await Task.Run(() => ImageCodec.Load(path, area, timing));
         }
         catch (Exception e) when (e is OutOfMemoryException or IOException or ArgumentException or UnauthorizedAccessException)
         {
             SetStatus("Can't read that file as an image.");
-            return;
+            return null;
         }
-
-        await RunAsync($"Writing to slot {Index(slot)}", async progress =>
-        {
-            var updated = await _store.ReplaceAsync(slot, content, _slots, progress);
-            // A replaced still image keeps its picture file id, so the cached frame and thumbnail must both go.
-            foreach (var id in slot.Resources.Concat(updated.Resources)) _frames.Remove(id);
-            ForgetThumbnail(slot);
-            ForgetThumbnail(updated);
-            _slots[_slots.IndexOf(slot)] = updated;
-            RebuildList(select: updated.Id);
-            SetStatus($"Slot {Index(updated)} replaced." + (updated.Id == _activeId ? " It's on the screen now." : " Press Show to put it on the screen."));
-        });
     }
 
     // ---------------- previews ----------------
@@ -320,7 +379,6 @@ internal sealed class MainForm : Form
             if (loaded < s.Resources.Length) text += $"  ·  loading preview {loaded}/{s.Resources.Length}";
         }
         if (s.Id == _activeId) text += "\nShowing on the keyboard now.";
-        if (s.IsTrackDeck) text += "\nTrackDeck rewrites this one on every track change, so it can't be replaced here.";
         _info.Text = text;
     }
 
@@ -366,7 +424,8 @@ internal sealed class MainForm : Form
         _refresh.Enabled = ok;
         _show.Enabled = ok && Selected != null;
         _prev.Enabled = _next.Enabled = ok && _slots.Count > 1;
-        _replace.Enabled = ok && CanReplace;
+        _add.Enabled = ok;
+        _replace.Enabled = _remove.Enabled = ok && CanReplace;
         _fixStartup.Enabled = ok;
     }
 

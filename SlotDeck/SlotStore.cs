@@ -43,7 +43,8 @@ public sealed record Slot(ushort Id, bool IsGif, byte[] Config, ushort[] Resourc
     internal static ushort Le16(byte[] b, int at) => BinaryPrimitives.ReadUInt16LittleEndian(b.AsSpan(at));
 }
 
-public sealed record ScanResult(List<Slot> Slots, ushort? ActiveId);
+/// <summary>Slots in screen-list order (then any not in the list), the one on screen, and the list itself (null if none).</summary>
+public sealed record ScanResult(List<Slot> Slots, ushort? ActiveId, ushort[]? ScreenList);
 
 /// <summary>Resource map (file 61): u16 header, u16 count, then 8-byte items (u16 id, u16 address, 4-byte hash).</summary>
 public static class ResourceMap
@@ -87,8 +88,9 @@ public static class ResourceMap
 }
 
 /// <summary>
-/// Reads and replaces screen slots. Only touches the slot's own entry and picture files, the resource map
-/// and the active-screen file. Never profiles, lighting, macros or key settings.
+/// Reads, adds, replaces and removes screen slots. Touches the slots' own entry and picture files, the resource
+/// map and the active-screen file; in the active profile only its screen list, the stored screen position and the
+/// cookie. Never lighting, macros or key settings.
 /// </summary>
 public sealed class SlotStore : IDisposable
 {
@@ -146,13 +148,23 @@ public sealed class SlotStore : IDisposable
     public Task<ScanResult> ScanAsync(IProgress<double>? progress, CancellationToken ct = default) => Read(async b =>
     {
         var mapIds = ResourceMap.Ids(await b.ReadFileAsync(ScreenFiles.ResourceMap) ?? []);
-        // Slots sit near the pictures Web Hub wrote, so scan a little past the highest one in the low range.
-        int highest = mapIds.Where(i => i < AllocBottom).Select(i => (int)i).DefaultIfEmpty(FirstId).Max();
-        var ids = Enumerable.Range(FirstId, Math.Max(highest + 100, FirstId + 200) - FirstId + 1).Select(i => (ushort)i)
-            .Append(ScreenFiles.TrackDeckConfig).ToList();
-
         _existing.Clear();
         _existing.UnionWith(mapIds);
+
+        // The profile's screen list names every slot FN + arrows reach, wherever its id is (SlotDeck's own are high up).
+        ushort[]? screens = null;
+        try
+        {
+            var p = await ReadProfileAsync(b);
+            if (p.LayoutId != 0) { _existing.Add(p.LayoutId); screens = ParseLayout(await b.ReadFileAsync(p.LayoutId)); }
+        }
+        catch (BragiException e) { Log?.Invoke("screen list not read: " + e.Message); }
+
+        // Web Hub's slots sit near its pictures, so scan a little past the highest one in the low range.
+        int highest = mapIds.Where(i => i < AllocBottom).Select(i => (int)i).DefaultIfEmpty(FirstId).Max();
+        var ids = Enumerable.Range(FirstId, Math.Max(highest + 100, FirstId + 200) - FirstId + 1).Select(i => (ushort)i)
+            .Concat(screens ?? []).Append(ScreenFiles.TrackDeckConfig).Distinct().ToList();
+
         var slots = new List<Slot>();
         for (int k = 0; k < ids.Count; k++)
         {
@@ -164,8 +176,10 @@ public sealed class SlotStore : IDisposable
             _existing.Add(ids[k]);
             if (Slot.Parse(ids[k], d) is { } s) slots.Add(s);
         }
+        int Position(Slot s) => screens != null && Array.IndexOf(screens, s.Id) is int i and >= 0 ? i : int.MaxValue;
+        slots = slots.OrderBy(Position).ThenBy(s => s.Id).ToList();
         var active = await b.ReadFileAsync(ScreenFiles.ActiveScreen);
-        return new ScanResult(slots, slots.FirstOrDefault(s => s.IsShownBy(active))?.Id);
+        return new ScanResult(slots, slots.FirstOrDefault(s => s.IsShownBy(active))?.Id, screens);
     });
 
     public Task<byte[]?> ReadFileAsync(ushort id) => Read(b => b.ReadFileAsync(id));
@@ -218,6 +232,79 @@ public sealed class SlotStore : IDisposable
         progress?.Report(1);
         Log?.Invoke($"slot {slot.Id} replaced: {ids.Count} picture file(s), {leftovers.Count} removed");
         return Slot.Parse(slot.Id, config)!;
+    });
+
+    /// <summary>
+    /// Adds a new slot: writes its pictures and entry, lists them in the resource map, adds the entry to the
+    /// profile's screen list (creating the list if the profile has none) and puts it on the screen.
+    /// </summary>
+    public Task<Slot> AddAsync(ScreenContent content, IReadOnlyList<Slot> allSlots, IProgress<double>? progress) => Write(async b =>
+    {
+        var map = await b.ReadFileAsync(ScreenFiles.ResourceMap) ?? [];
+        long free = await b.GetPropertyAsync(Bragi.PropFreeStorage);
+        long need = content.Packages.Count * (long)content.Packages[0].Length;
+        if (need > free - StorageMargin)
+            throw new BragiException($"Not enough space on the keyboard ({need / 1048576.0:0.0} MB needed, {Math.Max(0, free - StorageMargin) / 1048576.0:0.0} MB free).");
+        var (p, screens) = await ReadScreensAsync(b);
+        var list = (screens ?? [BuiltInScreen, .. allSlots.Select(s => s.Id)]).ToList();
+        if (list.Count >= 255) throw new InvalidOperationException("The screen list is full (255 screens).");
+        Log?.Invoke("backup: " + BackupFiles("add", (ScreenFiles.ResourceMap, map), (p.Id, p.Bytes)));
+
+        var ids = new List<ushort>();
+        for (int i = 0; i < content.Packages.Count; i++)
+        {
+            ids.Add(await AllocateAsync(b));
+            await b.WriteFileAsync(ids[i], content.Packages[i]);
+            progress?.Report((i + 1) / (double)(content.Packages.Count + 1));
+        }
+        var newMap = ResourceMap.Update(map, ids, []);
+        if (newMap != null) await b.WriteFileAsync(ScreenFiles.ResourceMap, newMap);
+
+        ushort entryId = await AllocateAsync(b);
+        var config = content.IsGif ? Slot.GifConfig(content.DelayMs, ids) : ScreenFiles.ImageConfig(ids[0]);
+        await b.WriteFileAsync(entryId, config);
+        if (!(await b.ReadFileAsync(entryId) ?? []).AsSpan().SequenceEqual(config))
+            throw new BragiException($"The new slot (file {entryId}) didn't read back correctly.");
+
+        // New slots go before TrackDeck's card, which stays last.
+        int at = list.IndexOf(ScreenFiles.TrackDeckConfig);
+        list.Insert(at < 0 ? list.Count : at, entryId);
+        await HostControlledAsync(b, () => SetScreensAsync(b, p, screens, list));
+
+        await b.WriteFileAsync(ScreenFiles.ActiveScreen, config);
+        progress?.Report(1);
+        Log?.Invoke($"slot {entryId} added: {ids.Count} picture file(s)");
+        return Slot.Parse(entryId, config)!;
+    });
+
+    /// <summary>
+    /// Removes a slot: puts <paramref name="showInstead"/> on the screen if the slot is showing, takes it out of the
+    /// profile's screen list, then deletes its entry and the pictures no other slot uses.
+    /// </summary>
+    public Task RemoveAsync(Slot slot, IReadOnlyList<Slot> allSlots, Slot? showInstead) => Write(async b =>
+    {
+        if (slot.IsTrackDeck) throw new InvalidOperationException("TrackDeck manages that slot itself.");
+        var map = await b.ReadFileAsync(ScreenFiles.ResourceMap) ?? [];
+        var shared = allSlots.Where(s => s.Id != slot.Id).SelectMany(s => s.Resources).ToHashSet();
+        var drop = slot.Resources.Distinct().Where(id => !shared.Contains(id)).ToList();
+        var (p, screens) = await ReadScreensAsync(b);
+        Log?.Invoke("backup: " + BackupFiles("remove", (ScreenFiles.ResourceMap, map), (slot.Id, slot.Config), (p.Id, p.Bytes)));
+
+        if (slot.IsShownBy(await b.ReadFileAsync(ScreenFiles.ActiveScreen)))
+        {
+            var instead = showInstead?.Config ?? await b.ReadFileAsync(BuiltInScreen);
+            if (instead != null) await b.WriteFileAsync(ScreenFiles.ActiveScreen, instead);
+        }
+        if (screens != null && screens.Contains(slot.Id))
+            await HostControlledAsync(b, () => SetScreensAsync(b, p, screens, screens.Where(id => id != slot.Id).ToList()));
+
+        await b.DeleteFileAsync(slot.Id);
+        _existing.Remove(slot.Id);
+        var newMap = ResourceMap.Update(map, [], drop);
+        if (newMap != null) await b.WriteFileAsync(ScreenFiles.ResourceMap, newMap);
+        foreach (var id in drop) { await b.DeleteFileAsync(id); _existing.Remove(id); }
+        Log?.Invoke($"slot {slot.Id} removed with {drop.Count} picture file(s)");
+        return true;
     });
 
     private async Task<ushort> AllocateAsync(Bragi b)
@@ -303,15 +390,7 @@ public sealed class SlotStore : IDisposable
             Log?.Invoke("backup: " + BackupFiles("screen-list", (ProfileList, await b.ReadFileAsync(ProfileList)), (p.Id, p.Bytes),
                 (p.PropertiesId, await b.ReadFileAsync(p.PropertiesId))));
 
-            ushort layoutId = await AllocateAsync(b);
-            var layout = LayoutFile([BuiltInScreen, .. slots.Select(s => s.Id)]);
-            await b.WriteFileAsync(layoutId, layout);
-            if (!(await b.ReadFileAsync(layoutId) ?? []).AsSpan().SequenceEqual(layout))
-                throw new BragiException($"The screen list (file {layoutId}) didn't read back correctly.");
-            Log?.Invoke($"screen list {layoutId}: {Convert.ToHexString(layout)}");
-
-            await WriteProfileAsync(b, p, layoutId);
-            return layoutId;
+            return await SetScreensAsync(b, p, null, [BuiltInScreen, .. slots.Select(s => s.Id)]);
         }
         finally { await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeSelfOperated); }
     });
@@ -332,6 +411,71 @@ public sealed class SlotStore : IDisposable
         }
         finally { await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeSelfOperated); }
     });
+
+    /// <summary>The active profile and its screen list (null if it has none).</summary>
+    private static async Task<(ProfileFile Profile, ushort[]? Screens)> ReadScreensAsync(Bragi b)
+    {
+        var p = await ReadProfileAsync(b);
+        if (p.LayoutId == 0) return (p, null);
+        return (p, ParseLayout(await b.ReadFileAsync(p.LayoutId))
+            ?? throw new BragiException($"The screen list (file {p.LayoutId}) has a format SlotDeck doesn't know."));
+    }
+
+    private static async Task HostControlledAsync(Bragi b, Func<Task> action)
+    {
+        await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeHostControlled);
+        try { await action(); }
+        finally { await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeSelfOperated); }
+    }
+
+    /// <summary>
+    /// Writes the profile's screen list (to a new file if it has none), keeps the stored screen position on the
+    /// same screen, and gives the profile a new cookie so the keyboard reloads it. Call in host-controlled mode.
+    /// </summary>
+    private async Task<ushort> SetScreensAsync(Bragi b, ProfileFile p, ushort[]? old, List<ushort> ids)
+    {
+        var layout = LayoutFile(ids);
+        ushort layoutId = p.LayoutId != 0 ? p.LayoutId : await AllocateAsync(b);
+        if (p.LayoutId != 0)
+            Log?.Invoke("backup: " + BackupFiles("screen-list-change", (layoutId, await b.ReadFileAsync(layoutId)),
+                (p.PropertiesId, await b.ReadFileAsync(p.PropertiesId))));
+        await b.WriteFileAsync(layoutId, layout);
+        if (!(await b.ReadFileAsync(layoutId) ?? []).AsSpan().SequenceEqual(layout))
+            throw new BragiException($"The screen list (file {layoutId}) didn't read back correctly.");
+        Log?.Invoke($"screen list {layoutId}: {Convert.ToHexString(layout)}");
+        if (old != null) await KeepScreenIndexAsync(b, p, old, ids);
+        await WriteProfileAsync(b, p, layoutId);
+        return layoutId;
+    }
+
+    private const ushort PropScreenIndex = 263;
+
+    /// <summary>
+    /// The profile's property map stores a position in the screen list (property 263). After the list changes,
+    /// points it at the same screen again, or at the first one if that screen is gone. Changes nothing else.
+    /// </summary>
+    private async Task KeepScreenIndexAsync(Bragi b, ProfileFile p, ushort[] old, List<ushort> ids)
+    {
+        var props = await b.ReadFileAsync(p.PropertiesId);
+        if (props is not { Length: >= 4 }) return;
+        int count = Slot.Le16(props, 2);
+        for (int i = 0; i < count && 4 + i * 6 + 6 <= props.Length; i++)
+        {
+            int at = 4 + i * 6;
+            if (Slot.Le16(props, at) != PropScreenIndex) continue;
+            uint index = BinaryPrimitives.ReadUInt32LittleEndian(props.AsSpan(at + 2));
+            int same = index < old.Length ? ids.IndexOf(old[index]) : index < ids.Count ? (int)index : -1;
+            uint want = same < 0 ? 0 : (uint)same;
+            if (want == index) return;
+            var updated = (byte[])props.Clone();
+            BinaryPrimitives.WriteUInt32LittleEndian(updated.AsSpan(at + 2), want);
+            await b.WriteFileAsync(p.PropertiesId, updated);
+            if (!(await b.ReadFileAsync(p.PropertiesId) ?? []).AsSpan().SequenceEqual(updated))
+                throw new BragiException($"The profile's properties (file {p.PropertiesId}) didn't read back correctly. A backup is in {Path.Combine(DataDir, "backups")}.");
+            Log?.Invoke($"screen position {index} -> {want}");
+            return;
+        }
+    }
 
     /// <summary>Sets the list pointer and a new cookie (so the keyboard reloads the profile), nothing else.</summary>
     private async Task WriteProfileAsync(Bragi b, ProfileFile p, ushort layoutId)

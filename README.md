@@ -2,14 +2,16 @@
 
 **See and swap the pictures on your keyboard's screen. No iCUE required.**
 
-The Corsair VANGUARD AIR 99 keeps the images and GIFs you upload in **slots** on the keyboard itself. SlotDeck is a small window that shows you what's in every slot and lets you change it, without iCUE and without touching your lighting, macros or key assignments. It only touches your profile if you ask it to fix the startup screen (see below).
+The Corsair VANGUARD AIR 99 keeps the images and GIFs you upload in **slots** on the keyboard itself. SlotDeck is a small window that shows you what's in every slot and lets you add, change and remove them, without iCUE and without touching your lighting, macros or key assignments. In your profile it only changes the screen list (the screens FN + arrows step through).
 
 > Not affiliated with or endorsed by Corsair. The screen protocol was worked out from Corsair's own public Web Hub app. Use at your own risk.
 
 ## What it does
 
 - **See them all.** Every slot gets a thumbnail, and GIFs play in the preview.
+- **Add a slot.** Press **Add…** and pick an image or GIF. It goes into the screen list, so FN + arrows reach it too, and it goes straight on the screen. A keyboard fresh out of the box has no slots of its own, so start here.
 - **Replace a slot.** Pick an image or GIF (or drop one on the window). A preview opens: drag on the picture to choose the area you want, and see exactly what the 248×170 screen will show, black bars and all. Hold Shift for the screen's shape, or press *Fill the screen*. For GIFs, slow them down by a percentage or set your own time between frames. Long GIFs are trimmed to 100 frames. A still image takes about 2 seconds to write; a 40-frame GIF takes about a minute.
+- **Remove a slot.** Select it and press **Remove**. Its pictures are deleted from the keyboard, and if it was on the screen the next slot takes its place.
 - **Show a slot.** Double-click it, or step through them with **Previous** / **Next**.
 - **No stray line.** Pictures uploaded with Corsair's Web Hub show a flickering 1-pixel line at the right edge of the screen. That's a bug in Web Hub (details below). Pictures written by SlotDeck don't have it.
 
@@ -34,7 +36,7 @@ If that's you, SlotDeck shows a **Fix startup screen…** button. It adds a list
 
 ## Plays nice with TrackDeck
 
-If you run [TrackDeck](https://github.com/yourgirljolyne/TrackDeck) (the now-playing card), its card shows up as a slot too, read-only, because TrackDeck rewrites it on every song. While TrackDeck is running, it puts its card back on the next track change.
+If you run [TrackDeck](https://github.com/yourgirljolyne/TrackDeck) (the now-playing card), SlotDeck leaves its card out of the list, because TrackDeck rewrites it on every song. New slots go before it in the screen list, so the card stays last for FN + arrows. While TrackDeck is running, it puts its card back on the next track change.
 
 ## Command line
 
@@ -42,8 +44,10 @@ If you run [TrackDeck](https://github.com/yourgirljolyne/TrackDeck) (the now-pla
 SlotDeck list                    list the slots (read-only)
 SlotDeck export <folder>         save each slot's picture as a PNG (read-only)
 SlotDeck show <n>                show slot n
-SlotDeck replace <n> <file>      replace slot n with an image or GIF, whole picture with black bars
-                                 (--fill crops to the screen; GIFs: --slow <percent> or --frame-ms <ms>)
+SlotDeck add <file>              add a slot with an image or GIF, whole picture with black bars
+SlotDeck replace <n> <file>      replace slot n with an image or GIF
+                                 (add and replace: --fill crops to the screen; GIFs: --slow <percent> or --frame-ms <ms>)
+SlotDeck remove <n>              remove slot n and its pictures
 SlotDeck screenlist [create|remove]  show, add or remove the profile's screen list
 SlotDeck dump <file id>...       print raw keyboard files as hex (read-only)
 ```
@@ -61,7 +65,7 @@ dotnet publish -c Release -r win-x64 -o dist -p:PublishSingleFile=true -p:SelfCo
 
 - **USB cable only.** The SLIPSTREAM wireless receiver doesn't pass screen commands on (Corsair's own Web Hub can't either).
 - Tested on the VANGUARD AIR 99 only.
-- The picture you replace is gone for good. SlotDeck backs up the small index files it changes to `%LOCALAPPDATA%\SlotDeck\backups`, not the pictures; run `SlotDeck export` first if you want copies.
+- A picture you replace or remove is gone for good. SlotDeck backs up the small index files it changes to `%LOCALAPPDATA%\SlotDeck\backups`, not the pictures; run `SlotDeck export` first if you want copies.
 
 ## Credits
 
