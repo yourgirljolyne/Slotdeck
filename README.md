@@ -36,7 +36,11 @@ If that's you, SlotDeck shows a **Fix startup screen…** button. It adds a list
 
 ## Plays nice with TrackDeck
 
-If you run [TrackDeck](https://github.com/yourgirljolyne/TrackDeck) (the now-playing card), SlotDeck leaves its card out of the list, because TrackDeck rewrites it on every song. New slots go before it in the screen list, so the card stays last for FN + arrows. While TrackDeck is running, it puts its card back on the next track change.
+If you run [TrackDeck](https://github.com/yourgirljolyne/TrackDeck) (the now-playing card), SlotDeck leaves its card out of the list, because TrackDeck rewrites it on every song. New slots go before it in the screen list, so the card stays last for FN + arrows. While TrackDeck is running, it puts its card back on the next track change. The same goes for [Admiral](https://github.com/yourgirljolyne/Admiral), which shows the card now.
+
+## FN + arrows while SignalRGB runs
+
+SignalRGB puts the keyboard in software mode, and in that mode the keyboard stops switching screens on FN + arrows, so it stays on one picture. [Admiral](https://github.com/yourgirljolyne/Admiral) fixes that: it sees FN + arrows and steps through the same screen list SlotDeck manages.
 
 ## Command line
 
