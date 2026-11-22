@@ -382,7 +382,7 @@ public sealed class SlotStore : IDisposable
     /// </summary>
     public Task<ushort> CreateScreenListAsync(IReadOnlyList<Slot> slots) => Write(async b =>
     {
-        await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeHostControlled);
+        bool switched = await b.EnterHostControlAsync();
         try
         {
             var p = await ReadProfileAsync(b);
@@ -392,13 +392,13 @@ public sealed class SlotStore : IDisposable
 
             return await SetScreensAsync(b, p, null, [BuiltInScreen, .. slots.Select(s => s.Id)]);
         }
-        finally { await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeSelfOperated); }
+        finally { await b.LeaveHostControlAsync(switched); }
     });
 
     /// <summary>Undo: sets the profile's list pointer back to 0 and deletes the list file.</summary>
     public Task<ushort> RemoveScreenListAsync() => Write(async b =>
     {
-        await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeHostControlled);
+        bool switched = await b.EnterHostControlAsync();
         try
         {
             var p = await ReadProfileAsync(b);
@@ -409,7 +409,7 @@ public sealed class SlotStore : IDisposable
             await b.DeleteFileAsync(layoutId);
             return layoutId;
         }
-        finally { await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeSelfOperated); }
+        finally { await b.LeaveHostControlAsync(switched); }
     });
 
     /// <summary>The active profile and its screen list (null if it has none).</summary>
@@ -423,9 +423,9 @@ public sealed class SlotStore : IDisposable
 
     private static async Task HostControlledAsync(Bragi b, Func<Task> action)
     {
-        await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeHostControlled);
+        bool switched = await b.EnterHostControlAsync();
         try { await action(); }
-        finally { await b.SetPropertyAsync(Bragi.PropOperatingMode, Bragi.ModeSelfOperated); }
+        finally { await b.LeaveHostControlAsync(switched); }
     }
 
     /// <summary>
