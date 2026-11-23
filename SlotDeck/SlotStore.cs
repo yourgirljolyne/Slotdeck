@@ -246,7 +246,7 @@ public sealed class SlotStore : IDisposable
         if (need > free - StorageMargin)
             throw new BragiException($"Not enough space on the keyboard ({need / 1048576.0:0.0} MB needed, {Math.Max(0, free - StorageMargin) / 1048576.0:0.0} MB free).");
         var (p, screens) = await ReadScreensAsync(b);
-        var list = (screens ?? [BuiltInScreen, .. allSlots.Select(s => s.Id)]).ToList();
+        var list = (screens ?? [.. await BuiltInScreenAsync(b), .. allSlots.Select(s => s.Id)]).ToList();
         if (list.Count >= 255) throw new InvalidOperationException("The screen list is full (255 screens).");
         Log?.Invoke("backup: " + BackupFiles("add", (ScreenFiles.ResourceMap, map), (p.Id, p.Bytes)));
 
@@ -292,7 +292,7 @@ public sealed class SlotStore : IDisposable
 
         if (slot.IsShownBy(await b.ReadFileAsync(ScreenFiles.ActiveScreen)))
         {
-            var instead = showInstead?.Config ?? await b.ReadFileAsync(BuiltInScreen);
+            var instead = showInstead?.Config ?? (await BuiltInScreenAsync(b) is [] ? null : await b.ReadFileAsync(BuiltInScreen));
             if (instead != null) await b.WriteFileAsync(ScreenFiles.ActiveScreen, instead);
         }
         if (screens != null && screens.Contains(slot.Id))
@@ -326,6 +326,20 @@ public sealed class SlotStore : IDisposable
     private const byte LayoutHeader = 55;
     /// <summary>The keyboard's built-in screen; Web Hub always puts it first in a profile's screen list.</summary>
     public const ushort BuiltInScreen = 28007;
+    /// <summary>The built-in screen's entry type (a 126-byte type-34 entry on the Air 99).</summary>
+    private const byte BuiltInScreenType = 34;
+
+    /// <summary>
+    /// [28007] while that file still is the built-in screen, else nothing. Web Hub puts it first in every screen list,
+    /// but a profile made by iCUE reuses 28007 for its lighting (seen 2026-11-23); listing or showing it then would hand
+    /// the screen a lighting file.
+    /// </summary>
+    private async Task<ushort[]> BuiltInScreenAsync(Bragi b)
+    {
+        if (await b.ReadFileAsync(BuiltInScreen) is [BuiltInScreenType, ..]) return [BuiltInScreen];
+        Log?.Invoke($"file {BuiltInScreen} isn't the built-in screen any more; leaving it out");
+        return [];
+    }
 
     /// <summary>The active profile's file, and where its screen-list pointer sits.</summary>
     private sealed record ProfileFile(ushort Id, byte[] Bytes, int LayoutAt)
@@ -390,7 +404,7 @@ public sealed class SlotStore : IDisposable
             Log?.Invoke("backup: " + BackupFiles("screen-list", (ProfileList, await b.ReadFileAsync(ProfileList)), (p.Id, p.Bytes),
                 (p.PropertiesId, await b.ReadFileAsync(p.PropertiesId))));
 
-            return await SetScreensAsync(b, p, null, [BuiltInScreen, .. slots.Select(s => s.Id)]);
+            return await SetScreensAsync(b, p, null, [.. await BuiltInScreenAsync(b), .. slots.Select(s => s.Id)]);
         }
         finally { await b.LeaveHostControlAsync(switched); }
     });
