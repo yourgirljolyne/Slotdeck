@@ -53,8 +53,19 @@ public sealed class Bragi : IDisposable
 
     // ---------------- session ----------------
 
+    // Holds the file lock, so two programs never start sessions at the same moment.
     public async Task StartSessionAsync()
     {
+        using var held = await KeyboardLock.AcquireAsync();
+        await StartSessionUnlockedAsync();
+    }
+
+    // Also used to restart an expired session in the middle of a file operation, which already holds the lock.
+    // The reply is only told apart by its command id (no session yet), so first drop replies to other programs'
+    // session starts that are still queued for this handle: taking one of those made two programs share a session.
+    private async Task StartSessionUnlockedAsync()
+    {
+        _dev.FlushInput();
         var payload = new byte[6];
         payload[0] = 1;
         RandomNumberGenerator.Fill(payload.AsSpan(1, 4));
@@ -106,7 +117,15 @@ public sealed class Bragi : IDisposable
 
     private const byte Buffer0 = 0;
 
+    /// <summary>Reads a whole file, or null if it doesn't exist. Holds <see cref="KeyboardLock"/>.</summary>
     public async Task<byte[]?> ReadFileAsync(ushort fileId)
+    { using var held = await KeyboardLock.AcquireAsync(); return await ReadFileUnlockedAsync(fileId); }
+
+    /// <summary>Writes a whole file, creating it if needed. Holds <see cref="KeyboardLock"/>.</summary>
+    public async Task WriteFileAsync(ushort fileId, byte[] content)
+    { using var held = await KeyboardLock.AcquireAsync(); await WriteFileUnlockedAsync(fileId, content); }
+
+    private async Task<byte[]?> ReadFileUnlockedAsync(ushort fileId)
     {
         try
         {
@@ -125,7 +144,7 @@ public sealed class Bragi : IDisposable
         finally { await UnbindAsync(); }
     }
 
-    public async Task WriteFileAsync(ushort fileId, byte[] content)
+    private async Task WriteFileUnlockedAsync(ushort fileId, byte[] content)
     {
         try
         {
@@ -157,7 +176,11 @@ public sealed class Bragi : IDisposable
         finally { await UnbindAsync(); }
     }
 
-    public async Task DeleteFileAsync(ushort fileId) => await CommandAsync(CmdDelete, Le16(fileId), throwOnStatus: false);
+    public async Task DeleteFileAsync(ushort fileId)
+    {
+        using var held = await KeyboardLock.AcquireAsync();
+        await CommandAsync(CmdDelete, Le16(fileId), throwOnStatus: false);
+    }
 
     private async Task<bool> OpenFileAsync(ushort fileId)
     {
@@ -200,7 +223,7 @@ public sealed class Bragi : IDisposable
             if ((expired || invalidState) && attempt == 0)
             {
                 Log?.Invoke($"cmd {cmd}: session {(expired ? "expired" : "invalid state")}, restarting");
-                await StartSessionAsync();
+                await StartSessionUnlockedAsync();
                 continue;
             }
             if (resp.Length > 1 && resp[1] != 0)
